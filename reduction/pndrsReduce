@@ -1,0 +1,350 @@
+#!/usr/local/bin/yorick -batch
+
+                        /* Load pndrs SILENTLY!! */
+
+_builtin_write = write;
+func write(x, .., format=) { }
+include, "pndrs.i"
+include, "pndrsPatch.i"
+write = _builtin_write;
+/* func catch(x) { return 0; }  */
+
+
+pndrsVersion += "b";
+
+    /* OIFITS standard allows supplementary columns. Use alt, az, OPD,
+       seeing, coherence time, delay line stroke.  These may impact
+      OI data and can be useful for models of instrumental / atmospheric
+      signatures. */
+
+struct struct_oiVis2 {
+  struct_oiVis2Hdr hdr;
+  int      targetId;        // -    1I
+  double   time;            // s    1D
+  double   mjd;             // day  1D
+  double   intTime;         // s    1D
+  double   vis2Data;        // -    D array
+  double   vis2Err;         // -    D array
+  double   uCoord;          // m    1D
+  double   vCoord;          // m    1D
+  int      staIndex(2);     // -    2I
+  char     flag;            // -    1L array
+  double   alt, 
+           az,
+           opd,
+           stroke,
+           seeing,
+           tau0; 
+};
+
+struct struct_oiT3 {
+  struct_oiT3Hdr hdr;
+  int      targetId;        // -    1I
+  double   time;            // s    1D
+  double   mjd;             // day  1D
+  double   intTime;         // s    1D
+  double   t3Amp;           // -    D array
+  double   t3AmpErr;        // -    D array
+  double   t3Phi;           // -    D array
+  double   t3PhiErr;        // -    D array
+  double   u1Coord;         // m    1D
+  double   v1Coord;         // m    1D
+  double   u2Coord;         // m    1D
+  double   v2Coord;         // m    1D
+  int      staIndex(3);     // -    3I
+  char     flag;            // -    1L array
+  double   alt, 
+           az,
+           opd1,
+           opd2,
+           stroke1,
+           stroke2,
+           seeing,
+           tau0;
+};
+
+struct struct_oiVis {
+  struct_oiVisHdr hdr;
+  int      targetId;        // -      1I
+  double   time;            // s      1D
+  double   mjd;             // day    1D
+  double   intTime;         // s      1D
+  complex  visData;         // -      C array
+  complex  visErr;          // -      C array
+  double   visAmp;          // -      D array
+  double   visAmpErr;       // -      D array
+  double   visPhi;          // -      D array
+  double   visPhiErr;       // -      D array
+  double   uCoord;          // m      1D
+  double   vCoord;          // m      1D
+  int      staIndex(2);     // -      2I
+  char     flag;            // -      1L array
+  double   alt, 
+           az,
+           opd,
+           stroke,
+           seeing,
+           tau0; 
+};
+
+table_oiFitsMemberName =
+  [["effWave",      "EFF_WAVE",  "m"],
+   ["effBand",      "EFF_BAND",  "m"],
+   ["intTime",      "INT_TIME",  "sec"],
+   ["time",         "TIME",      "sec"],
+   ["mjd",          "MJD",       "day"],
+   ["staName",      "STA_NAME",  ""],
+   ["staIndex",     "STA_INDEX", ""],
+   ["targetId",     "TARGET_ID", ""],
+   ["telName",      "TEL_NAME",  ""],
+   ["sysVel",       "SYSVEL",    "m/s"],
+   ["raEp0",        "RAEP0",     "deg"],
+   ["decEp0",       "DECEP0",    "deg"],
+   ["raErr",        "RA_ERR",    "deg"],
+   ["decErr",       "DEC_ERR",   "deg"],
+   ["pmRa",         "PMRA",      "deg/year"],
+   ["pmDec",        "PMDEC",     "deg/year"],
+   ["pmRaErr",      "PMRA_ERR",  "deg/year"],
+   ["pmDecErr",     "PMDEC_ERR", "deg/year"],
+   ["paraErr",      "PARA_ERR",  "deg"],
+   ["parallax",     "PARALLAX",  "deg"],
+   ["equinox",      "EQUINOX",   "year"],
+   ["diameter",     "DIAMETER",  "m"],
+   ["staXYZ",       "STAXYZ",    "m"],
+   ["uCoord",       "UCOORD",    "m"],
+   ["vCoord",       "VCOORD",    "m"],
+   ["u1Coord",      "U1COORD",    "m"],
+   ["v1Coord",      "V1COORD",   "m"],
+   ["u2Coord",      "U2COORD",   "m"],
+   ["v2Coord",      "V2COORD",   "m"],
+   ["visPhi",       "VISPHI",    "deg"],
+   ["visPhiErr",    "VISPHIERR", "deg"],
+   ["t3Phi",        "T3PHI",     "deg"],
+   ["t3PhiErr",     "T3PHIERR",  "deg"],
+   ["fluxRatio",    "FLUX_RATIO",  ""],
+   ["fluxSum",      "FLUX_SUM",    ""],
+   ["fluxProduct",  "FLUX_PRODUCT",""],
+   ["fringeSnr",    "FRINGE_SNR",  ""],
+   ["dateObs",      "DATE-OBS",    ""],
+   ["opd",          "OPD",       "m"],
+   ["stroke",       "DDL_STROKE",       "m"],
+   ["stroke1",      "DDL1_STROKE",       "m"],
+   ["stroke1",      "DDL2_STROKE",       "m"],
+   ["opd1",         "OPD1",      "m"],
+   ["opd2",         "OPD2",      "m"],
+   ["alt",          "ALT",       "deg"],
+   ["az",           "AZ",        "deg"],
+   ["seeing",       "SEEING",    "arcsec"],
+   ["tau0",         "TAU0", "ms"]];
+
+local __strTested; /* ensure that dynamic structures are recomputed */
+
+func pndrsGetOPDIss(imgLog, t1, t2, &opd, &stroke, &sta1, &sta2)
+{
+  opd = stroke = sta1 = sta2 = [];
+
+  /* Init */
+  if (numberof(imgLog)>1) error;
+
+  /* Convert t1 and t2 in ISS numbers in header */
+  t1 = pndrsPionierToIss(imgLog,t1);
+  t2 = pndrsPionierToIss(imgLog,t2);
+  
+  /* Loop on the telescope pairs since impossible to vector's */
+  for (i=1;i<=numberof(t1);i++) {
+    lenISS1 = lenISS2 = lenISS = angISS1 = angISS2 = angISS = 0.0;
+    
+        /* The ISS sign are always define from lowest to highest ISS numbers,
+       therefore we will swap the sign of the uv-plan for our
+       baselines defined the other way */
+    A = min(t1(i),t2(i));
+    B = max(t1(i),t2(i));
+
+    /* Fill the station name */
+    if (t1(i)==0) {
+      grow, sta1, " ";
+    } else {
+      grow, sta1, get_member(imgLog(1), swrite(format="issStation%i",t1(i)));
+    }
+        /* Fill the station name */
+    if (t2(i)==0) {
+      grow, sta2, " ";
+    } else {
+      grow, sta2, get_member(imgLog(1), swrite(format="issStation%i",t2(i)));
+    }
+
+    /* get a name */
+    oplA = 0;
+    strokeA = 0;
+    if (A != 0)
+    {
+      oplA += get_member(imgLog(1), "issDl" + pr1(A) + "OplStart");
+      oplA += get_member(imgLog(1), "issDl" + pr1(A) + "OplEnd");
+      oplA /= 2;
+      strokeA = get_member(imgLog(1), "dl" + pr1(A) + "Stroke");
+    }
+    oplB = 0;
+    strokeB = 0;
+    if (B != 0)
+    {
+      oplB += get_member(imgLog(1), "issDl" + pr1(B) + "OplStart");
+      oplB += get_member(imgLog(1), "issDl" + pr1(B) + "OplEnd");
+      oplB /= 2;
+      strokeB = get_member(imgLog(1), "dl" + pr1(B) + "Stroke");
+    }
+
+    sign = [-1, 1](1 + (t1(i) < t2(i)));
+    grow, opd, (oplB - oplA) * sign;
+    grow, stroke, (strokeB - strokeA) * sign;
+
+  }
+
+  return 1;
+
+}
+
+func pndrsSetOiAmbi(imgLog, &oiData)
+{
+  if (is_array(oiData))
+  {
+    oiData.alt = imgLog.issAlt;
+    oiData.az = imgLog.issAz;
+    oiData.seeing = (imgLog.issFwhmEnd + imgLog.issFwhmStart) / 2;
+    oiData.tau0 = (imgLog.issTau0End + imgLog.issTau0Start) / 2;
+  }
+
+}
+
+/* pndrsDefaultOiArray sets the (u, v) coordinates.  I override it to 
+   include the insertion of current conditions (seeing, coherence time,
+   pointing position) and instrumental properties (OPD & differential
+   delay line stroke).
+ */
+
+if (is_void(pndrsDefaultOiArray_orig))
+{
+  pndrsDefaultOiArray_orig = pndrsDefaultOiArray;
+}
+
+
+func pndrsDefaultOiArray(imgLog, &oiArray, &oiVis2, &oiT3, &oiVis)
+{
+
+  local opd, stroke, opd1, opd2, stroke1, stroke2;
+
+  ok = pndrsDefaultOiArray_orig(imgLog, oiArray, oiVis2, oiT3, oiVis);
+  if (!ok)
+  {
+    return ok;
+  }
+  
+  if (is_array(oiVis))
+  {
+    pndrsSetOiAmbi, imgLog, oiVis;
+    pndrsGetOPDIss, imgLog(1), oiVis.staIndex(1,), oiVis.staIndex(2,), opd, stroke; 
+    oiVis.opd = opd;
+    oiVis.stroke = stroke;
+  }
+
+  if (is_array(oiVis2))
+  {
+    pndrsSetOiAmbi, imgLog, oiVis2;
+    pndrsGetOPDIss, imgLog(1), oiVis2.staIndex(1,), oiVis2.staIndex(2,), opd, stroke; 
+    oiVis2.opd = opd;
+    oiVis2.stroke = stroke;
+  }
+
+  if (is_array(oiT3))
+  {
+    pndrsSetOiAmbi, imgLog, oiT3;
+    pndrsGetOPDIss, imgLog(1), oiT3.staIndex(1,), oiT3.staIndex(2,), opd1, stroke1;
+    pndrsGetOPDIss, imgLog(1), oiT3.staIndex(2,), oiT3.staIndex(3,), opd2, stroke2;
+    oiT3.opd1 = opd1;
+    oiT3.stroke1 = stroke1;
+    oiT3.opd2 = opd2;
+    oiT3.stroke2 = stroke2;
+  }  
+
+}
+
+
+                              /* Arguments and options */
+
+include, "argparse.i"
+
+
+parser = argparse_parser(
+  prog="pndrsReduce",
+  add_verbose=1,
+  description="Process PIONIER data. In addition to the standard OIFITS columns, each data point gives the ambient conditions (seeing and coherence time), the pointing properties (alt and az), and some instrumental properties (optical path delay and OPD scan stroke).\n\n\nExample: pndrsReduce --plot-calibrated -rcvv to get the standard behaviour of the pipeline.");
+argparse_add_argument, parser, ["--overwrite", "-o"], action="store_true",  
+  default=0, dest="ow", help="Overwrite OIFITS files";
+argparse_add_argument, parser, ["--mode", "-m"], 
+  default="abcd", help="Reduction mode (ac / abcd / ac_faint / abcd_faint)";
+argparse_add_argument, parser, ["--remove-log"], action="store_true",
+  default=0, help="Remove PIONIER log and rebuild it.", dest="rmlog";
+argparse_add_argument, parser, ["--reduce", "-r"], action="store_true",
+  default=0, help="Reduce raw PIONIER files, i.e. produce raw visibilities not corrected from the instrumental visibility";
+argparse_add_argument, parser, ["--calibrate", "-c"], action="store_true",
+  default=0, help="Calibrate OIFITS files, i.e. correct the visibilities from the the interferometric transfer function";
+argparse_add_argument, parser, ["--overwrite-cal"], action="store_true", 
+  default=0, dest="owcal", help="Overwrite calibration products";
+argparse_add_argument, parser, ["--plot-calibrated"], action="store_true",
+  default=0, dest="plotcal", help="Plot calibrated data and transfer function";
+argparse_add_argument, parser, ["--datadir", "-d"], default=".",
+  help="Directory that hold raw PIONIER frames";
+argparse_add_argument, parser, "--catdir", default="/usr/local/catalogs/",
+  help="Directory containing the catalogs for stellar diameters";
+args = argparse_parse(parser, get_argv());
+
+if (args.__help__ || args.__error__)
+{
+    quit;
+}
+
+yocoLogSet, 1, args.verbose;
+pndrsBatchMakeSilentGraphics, 1;
+pndrsBatchProductDir, args.datadir, oidir, app=args.mode;
+
+
+                         /* Reduce all data in current dir */
+
+
+cwd = get_cwd();
+
+if (args.reduce)
+{
+  cd, args.datadir;
+  if (args.rmlog)
+  {
+    remove, "pnlog.fits";
+  }
+  if (args.verbose)
+  {
+    write, format="%s\n", "Reduce files";
+  }
+  pndrsComputeAllMatrix, inputDir=".", overwrite=args.owcal;
+  pndrsComputeAllSpecCal, inputDir=".", overwrite=args.owcal;
+  pndrsComputeAllOiData, inputDir=".", mode=args.mode, overwrite=args.ow;
+  cd, cwd;
+  cd, oidir;
+  system, "rm -f *.pdf.eps";
+  cd, cwd;
+}
+
+
+if (args.calibrate)
+{
+  cd, oidir;
+  if (args.verbose)
+  {
+    write, format="%s\n", "Calibrate files";
+  }
+  pndrsCalibrateAllOiData, inputDir=".", rmPdf=1, catalogsDir=args.catdir;
+  system, "rm -f *.pdf.eps";
+}
+
+
+/* quit */
+
+quit;

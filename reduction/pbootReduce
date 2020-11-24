@@ -1,0 +1,91 @@
+#! /usr/local/bin/yorick -batch
+
+include, "pbootBatch.i"
+pndrsBatchMakeSilentGraphics, 1;
+
+#include "argparse.i"
+include, "string.i"
+
+random_seed, log10(1 + parsedate(timestamp()))(sum) / 10.9;
+
+/* Arguments and options */
+
+parser = argparse_parser(
+  prog="pbootReduce",
+  add_verbose=1,
+  description="Reduce and calibrate PIONIER using bootstrapping.");
+argparse_add_argument, parser, ["--overwrite", "-o"], action="store_true", 
+  default=0, dest="ow", help="Overwrite OIFITS files";
+argparse_add_argument, parser, ["--mode", "-m"], 
+  default="abcd", help="Reduction mode";
+argparse_add_argument, parser, ["--remove-log"], action="store_true",
+  default=0, help="Remove PIONIER log and rebuild it", dest="rmlog";
+argparse_add_argument, parser, ["--vistfmode"], action="store", type=string,
+  dest="vistfmode", default="smooth", metavar="mode", 
+  choices=["interp", "average", "smooth", "linear", "quadratic", "altaz", 
+           "altazfree", "altazsmooth"], 
+  help="TF interpolation mode";
+argparse_add_argument, parser, ["--reduce", "-r"], action="store_true",
+  default=0, help="Reduce raw PIONIER files";
+argparse_add_argument, parser, ["--nboot"], action="store",
+  default=5000, help="Number of bootstraps";
+argparse_add_argument, parser, ["--calibrate", "-c"], action="store_true",
+  default=0, help="Calibrate OIFITS files";
+argparse_add_argument, parser, ["--overwrite-cal"], action="store_true", 
+  default=0, dest="owcal", help="Overwrite calibration products";
+argparse_add_argument, parser, ["--plot-calibrated"], action="store_true",
+  default=0, dest="plotcal", help="Plot calibrated data and transfer function. (unsupported)";
+argparse_add_argument, parser, ["--datadir", "-d"], default=".",
+  help="Directory that hold raw PIONIER frames";
+argparse_add_argument, parser, "--catdir", default="/usr/local/catalogs/",
+  help="Directory containing the catalogs for stellar diameters";
+args = argparse_parse(parser, get_argv());
+
+if (args.__help__ || args.__error__)
+{
+    quit;
+}
+
+nboot = args.nboot;
+/*
+pndrsVersion += "_test";
+nboot = 3; 
+*/
+yocoLogSet, 1, args.verbose;
+pndrsBatchProductDir, args.datadir, oidir, app=args.mode;
+
+/* Reduce all data in current dir */
+cwd = get_cwd();
+
+if (args.reduce)
+{
+  cd, args.datadir;
+  if (args.rmlog)
+  {
+    remove, "pnlog.fits";
+  }
+  if (args.verbose)
+  {
+    write, format="%s\n", "Reduce files";
+  }
+  pbootReduceDirectory, ".", mode=args.mode, silent=1, 
+    overwrite=args.ow, overwrite_cal=args.owcal, nboot=nboot;
+  cd, cwd;
+  cd, oidir;
+  system, "rm -rf *.pdf.eps 2>/dev/null";
+  cd, cwd;
+}
+
+if (args.calibrate)
+{
+  cd, oidir;
+  if (args.verbose)
+  {
+    write, format="%s\n", "Calibrate files";
+  }
+  pbootCalibrateDirectory, ".", 
+    rmPdf=1, vis2TfMode=args.vistfmode, catalogsDir=args.catdir, 
+    plot_calibrated=args.plotcal; 
+  system, "rm -rf *.pdf.eps 2>/dev/null";
+  cd, cwd;
+}
